@@ -1,0 +1,352 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Users & Auth ────────────────────────────────────────
+
+model User {
+  id        String   @id // Supabase auth UUID, set explicitly on register
+  name      String
+  email     String   @unique
+  nim       String?  @unique // NIM mahasiswa (optional, hanya untuk MAHASISWA)
+  role      String   @default("MAHASISWA") // "DOSEN" | "MAHASISWA"
+  isBlocked Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  materials     Material[]
+  quizzes       Quiz[]
+  rps           RPS[]
+  groupsCreated Group[]
+  memberships   GroupMember[]
+  quizAttempts  QuizAttempt[]
+  gradeMatrices GradeMatrix[]
+}
+
+// ─── Groups / Kelas ──────────────────────────────────────
+
+model Group {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  code        String  @unique // 6-char alphanumeric
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  members       GroupMember[]
+  materials     MaterialGroup[]
+  quizzes       QuizGroup[]
+  rpss          RPSGroup[]
+  gradeMatrices GradeMatrix[]
+}
+
+model GroupMember {
+  id       String   @id @default(cuid())
+  userId   String
+  groupId  String
+  joinedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+}
+
+// ─── Topics / Bidang ────────────────────────────────────
+
+model Topic {
+  id        String     @id @default(cuid())
+  slug      String     @unique // e.g. "structural"
+  label     String     // e.g. "Teknik Struktur"
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  subtopics SubTopic[]
+}
+
+model SubTopic {
+  id        String   @id @default(cuid())
+  slug      String   // e.g. "mekanika_struktur"
+  label     String   // e.g. "Mekanika Struktur"
+  topicId   String
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([topicId, slug])
+}
+
+// ─── Materials ───────────────────────────────────────────
+
+model Material {
+  id          String   @id @default(cuid())
+  title       String
+  topic       String
+  subTopic    String
+  language    String   @default("id")
+  difficulty  String
+  depth       String   @default("standard")
+
+  // Generated content
+  content     String
+  summary     String?
+  objectives  String?
+
+  // Source info (for upload/transform)
+  sourceType    String  @default("topic") // "topic" | "file" | "url"
+  sourceContent String?
+  sourceUrl     String?
+
+  // Ownership & visibility
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  isPublished Boolean  @default(false)
+
+  // Metadata
+  wordCount   Int      @default(0)
+  modelUsed   String   @default("gemini-3-flash-preview")
+  tokensUsed  Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  groups      MaterialGroup[]
+  attachments MaterialAttachment[]
+}
+
+model MaterialAttachment {
+  id             String   @id @default(cuid())
+  materialId     String
+  sectionIndex   Int
+  sectionHeading String
+  filename       String
+  storedName     String
+  fileType       String   // "pdf" | "pptx" | "ppt"
+  fileSize       Int
+  url            String
+  createdAt      DateTime @default(now())
+
+  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+}
+
+model MaterialGroup {
+  materialId String
+  groupId    String
+
+  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([materialId, groupId])
+}
+
+// ─── Quizzes ─────────────────────────────────────────────
+
+model Quiz {
+  id            String   @id @default(cuid())
+  title         String
+  topic         String
+  subTopic      String
+  language      String   @default("id")
+  difficulty    String
+
+  // Quiz configuration
+  examType         String   @default("Quiz")   // "Quiz" | "UTS" | "UAS"
+  safeMode         Boolean  @default(false)
+  questionCount    Int      @default(10)
+  questionType     String   @default("mixed")
+  essayGradingMode String   @default("manual") // "manual" | "ai_auto"
+
+  // Generated content
+  questions     String
+
+  // Ownership & visibility
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  isPublished Boolean  @default(false)
+
+  // Metadata
+  totalPoints   Int      @default(0)
+  modelUsed     String   @default("gemini-3-flash-preview")
+  tokensUsed    Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  groups   QuizGroup[]
+  attempts QuizAttempt[]
+}
+
+model QuizGroup {
+  quizId  String
+  groupId String
+
+  quiz  Quiz  @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([quizId, groupId])
+}
+
+// ─── Quiz Attempts ───────────────────────────────────────
+
+model QuizAttempt {
+  id          String    @id @default(cuid())
+  quizId      String
+  userId      String
+  answers     String    // JSON-encoded answers
+  score       Float     @default(0)
+  totalPoints Int       @default(0)
+  essayGrades String?   // JSON: Record<number, { score: number, maxScore: number, feedback: string, gradedBy: "manual"|"ai" }>
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  violationCount Int       @default(0)
+  lockedAt       DateTime?
+
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── RPS (Rencana Pembelajaran Semester) ─────────────────
+
+model RPS {
+  id           String   @id @default(cuid())
+  title        String   // "RPS - Mekanika Tanah"
+  courseName   String   // Nama mata kuliah
+  courseCode   String?  // Kode mata kuliah (opsional)
+  credits      Int      @default(3)    // Jumlah SKS
+  semester     Int      @default(1)    // Semester ke- (1–8)
+  semesterType String   @default("Ganjil") // "Ganjil" | "Genap"
+  academicYear String   @default("2024/2025")
+  prerequisite String?  // Prasyarat mata kuliah
+  program      String   @default("Teknik Sipil")
+
+  // File yang di-upload (PDF / Word / Excel)
+  fileUrl      String?  // URL publik file
+  fileName     String?  // Nama file asli
+  fileType     String?  // "pdf" | "docx" | "xlsx"
+  fileSize     Int?     // Bytes
+
+  // Field lama (opsional, untuk backward-compat data lama)
+  description  String   @default("")
+  cpl          String   @default("[]")
+  cpmk         String   @default("[]")
+  assessmentScheme String?
+  references   String?
+  weeks        String   @default("[]")
+
+  // Metadata
+  topic        String   @default("")
+  subTopic     String   @default("")
+  language     String   @default("id")
+  modelUsed    String   @default("")
+  tokensUsed   Int      @default(0)
+
+  // Kepemilikan
+  createdById  String?
+  createdBy    User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  isPublished  Boolean    @default(false)
+  groups       RPSGroup[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model RPSGroup {
+  rpsId   String
+  groupId String
+  rps     RPS   @relation(fields: [rpsId], references: [id], onDelete: Cascade)
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([rpsId, groupId])
+}
+
+// ─── Grade Matrix (Penilaian) ────────────────────────────
+
+model GradeMatrix {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  groupId     String?
+  group       Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  components  GradeComponent[]
+  students    GradeStudent[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model GradeComponent {
+  id            String  @id @default(cuid())
+  gradeMatrixId String
+  name          String
+  percentage    Float
+  order         Int     @default(0)
+
+  gradeMatrix GradeMatrix  @relation(fields: [gradeMatrixId], references: [id], onDelete: Cascade)
+  scores      GradeScore[]
+}
+
+model GradeStudent {
+  id            String  @id @default(cuid())
+  gradeMatrixId String
+  name          String
+  nim           String?
+  order         Int     @default(0)
+
+  gradeMatrix GradeMatrix  @relation(fields: [gradeMatrixId], references: [id], onDelete: Cascade)
+  scores      GradeScore[]
+}
+
+model GradeScore {
+  id          String @id @default(cuid())
+  componentId String
+  studentId   String
+  score       Float?
+
+  component GradeComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  student   GradeStudent   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([componentId, studentId])
+}
+
+// ─── App Settings (key-value store) ─────────────────────
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ─── AI Usage Log ───────────────────────────────────────
+
+model AiUsageLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  action       String   // "generate_material" | "generate_quiz" | "grade_essay" | "generate_illustration" | "generate_section"
+  model        String   // e.g. "gemini-2.5-flash"
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  totalTokens  Int      @default(0)
+  estimatedCost Float   @default(0) // in USD
+  metadata     String?  // JSON: { materialId?, quizId?, attemptId? }
+  createdAt    DateTime @default(now())
+}
