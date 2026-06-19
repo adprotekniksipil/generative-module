@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
   ],
 
   // Native modules yang butuh server-side processing
-  serverExternalPackages: ["pdf-parse", "officeparser"],
+  serverExternalPackages: ["pdf-parse", "officeparser", "firebase-admin", "firebase-admin/auth", "firebase-admin/firestore", "firebase-admin/app"],
 };
 
 export default nextConfig;
